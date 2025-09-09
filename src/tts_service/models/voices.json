@@ -1,0 +1,13 @@
+{
+    "provder": "piper",
+    "voices" : [
+        {
+            "id" : "piper-es-ES-mls-medium",
+            "lang":  "es-ES",
+            "name": "Piper es-ES (mls-medium)",
+            "model" : "models/piper/es-ES/es_ES-mls-medium.onnx",
+            "config" : "models/piper/es-ES/es_ES-mls-medium.onnx.json",
+            "sample_rate" : 22050
+        }
+    ]
+}

@@ -1,8 +1,10 @@
 import io
+import json
 import math
+from pathlib import Path
 import struct
 import time
-from typing import Optional
+from typing import Any, Dict, Optional
 import uuid
 import wave
 from fastapi import FastAPI, Security, HTTPException, status
@@ -10,7 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
+
+from tts_service.engines.piper import PiperEngine
 from .config import settings
+
 
 
 app = FastAPI(
@@ -27,6 +32,17 @@ app.add_middleware(
 )
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+_VOICES_PATH = Path(__file__).resolve().parents[1] / "tts_service" / "models" / "voices.json"
+with _VOICES_PATH.open("r", encoding="utf-8") as f:
+    VOICE_INDEX: Dict[str, Any] = json.load(f)
+
+def _get_voice(voice_id: str) -> Optional[Dict[str, Any]]:
+    for v in VOICE_INDEX.get("voices", []):
+        if v.get("id") == voice_id:
+            return v
+    return None
+
 def require_api_key(api_key: str = Security(api_key_header)):
     if not api_key or api_key != settings.API_KEY:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or missing API Key")
@@ -39,43 +55,44 @@ def health():
 
 @app.get("/voices")
 def voices(api_key: str = Security(require_api_key)):
-    return {
-        "provider": "stub",
-        "voices": [
-            { "id": "stub-es-ES-1", "lang": "es-ES", "name": "Stub Español"},
-            { "id": "stub-en-US-1", "lang": "en-US", "name": "Stub Ingles"}
-        ]
-    }
+    return VOICE_INDEX
     
 class SyntheziseRequest(BaseModel):
-    text: str = Field(..., min_length=1, description="Texto a sintetizar (stub)")
-    voice: Optional[str] = Field(None, description="ID de voz (no usado en stub)")
+    text: str = Field(..., min_length=1)
+    voice: Optional[str] = Field(None, description="ID de voz (de /voices)")
     format: str = Field("wav", pattern="^(wav)$", description=".wav format")
-    sample_rate: int = Field(16000, ge=8000, le=48000)
-    duration_sec: float = Field(1.5, ge=0.2, le=10.0, description="Duracion del audio")
-    freq_hz: float = Field(440.0, ge=50.0, le=2000.0, description="Frecuencia de la onda")
+    sample_rate: Optional[int] = Field(None, ge=8000, le=48000)
+    length_scale: Optional[float] = Field(None, ge=0.5, le=2.0)
+    noise_scale: Optional[float] = Field(None, ge=0.0, le=1.0)
+    noise_w: Optional[float] = Field(None, ge=0.0, le=1.0)
+    speaker: Optional[int] = Field(None, ge=0)
     
-def _generate_sine_wav(sr: int, seconds: float, freq: float) -> bytes:
-    n_frames = int(sr * seconds)
-    buf = io.BytesIO()
-    with wave.open(buf, "wb") as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(sr)
-        amplitude = 0.4
-        for i in range(n_frames):
-            t = i / sr
-            sample = int(amplitude * 32767 * math.sin(2 * math.pi * freq * t))
-            wf.writeframes(struct.pack("<h", sample))
-    return buf.getvalue()
+
 
 @app.post("/synthesize")
 def synthesize(req: SyntheziseRequest, api_key: str = Security(require_api_key)):
     if req.format != "wav":
         raise HTTPException(status_code=400, detail="Only WAV supported")
-    audio_bytes = _generate_sine_wav(req.sample_rate, req.duration_sec, req.freq_hz)
-    filename = f"tts-{int(time.time())}-{uuid.uuid4().hex[:8]}.wav"
-    return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/wav",headers={
-        "Content-Disposition": f'attachment; filename="{filename}"',
-        "X-Stub-Info": f"text:len={len(req.text)};voice={req.voice or 'stub'}"
+    
+    voice = _get_voice(req.voice)
+    if not voice:
+        raise HTTPException(status_code=404, detail=f"Voice not found: {req.voice}")
+    
+    engine = PiperEngine(model_path=voice["model"], config_path=voice.get("config"))
+    sr = req.sample_rate or voice.get("sample_rate")
+   
+    try:
+        audio_byes = engine.synthesize_wav(
+            text=req.text,
+            sample_rate=sr,
+            length_scale=req.length_scale,
+            noise_scale=req.noise_scale,
+            noise_w=req.noise_w,
+            speaker=req.speaker
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    filename = f'{req.voice}.wav'
+    return StreamingResponse(io.BytesIO(audio_byes), media_type="audio/wav", headers={
+        "Content-Disposition": f'attachment; filename="{filename}"'
     })
