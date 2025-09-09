@@ -24,11 +24,8 @@ def test_voices_ok():
 def test_synthesize_wav_ok():
     payload = {
         "text": "Hola mundo",
-        "voice": "stub-es-Es-1",
-        "format": "wav",
-        "sample_rate" : 16000,
-        "duration_sec" : 0.3,
-        "freq_hz" : 440.0
+        "voice": "piper-es-ES-mls-medium",
+        "format": "wav"
     }
     
     r = client.post("/synthesize", json=payload, headers={"X-API-Key": settings.API_KEY})
