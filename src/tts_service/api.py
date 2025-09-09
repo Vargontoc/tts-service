@@ -12,8 +12,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
+from pydub import AudioSegment
 
 from tts_service.engines.piper import PiperEngine
+from tts_service.utils import cache
 from .config import settings
 
 
@@ -60,7 +62,7 @@ def voices(api_key: str = Security(require_api_key)):
 class SyntheziseRequest(BaseModel):
     text: str = Field(..., min_length=1)
     voice: Optional[str] = Field(None, description="ID de voz (de /voices)")
-    format: str = Field("wav", pattern="^(wav)$", description=".wav format")
+    format: str = Field("wav", description=".wav / mp3 / ogg format")
     sample_rate: Optional[int] = Field(None, ge=8000, le=48000)
     length_scale: Optional[float] = Field(None, ge=0.5, le=2.0)
     noise_scale: Optional[float] = Field(None, ge=0.0, le=1.0)
@@ -71,18 +73,22 @@ class SyntheziseRequest(BaseModel):
 
 @app.post("/synthesize")
 def synthesize(req: SyntheziseRequest, api_key: str = Security(require_api_key)):
-    if req.format != "wav":
-        raise HTTPException(status_code=400, detail="Only WAV supported")
-    
     voice = _get_voice(req.voice)
     if not voice:
         raise HTTPException(status_code=404, detail=f"Voice not found: {req.voice}")
     
-    engine = PiperEngine(model_path=voice["model"], config_path=voice.get("config"))
-    sr = req.sample_rate or voice.get("sample_rate")
-   
-    try:
-        audio_byes = engine.synthesize_wav(
+    fmt = req.format.lower()
+    if fmt not in ["wav", "mp3", "ogg"]:
+        raise HTTPException(status_code=400, detail="Format must be wav, mp3 or ogg")
+    
+    sr = req.sample_rate or voice.get("sample_rate", 22050)
+    key = cache.make_key(req.text, req.voice, sr, fmt)
+    
+    if cache.exists(key, fmt):
+        audio_bytes = cache.load(key, fmt)
+    else:
+        engine = PiperEngine(voice["model"], voice.get("config"))
+        wav_bytes = engine.synthesize_wav(
             text=req.text,
             sample_rate=sr,
             length_scale=req.length_scale,
@@ -90,9 +96,18 @@ def synthesize(req: SyntheziseRequest, api_key: str = Security(require_api_key))
             noise_w=req.noise_w,
             speaker=req.speaker
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        if fmt == "wav":
+            audio_bytes = wav_bytes
+        else:
+            audio = AudioSegment.from_file(io.BytesIO(wav_bytes), format="wav")
+            out_buf = io.BytesIO()
+            audio.export(out_buf, format=fmt)
+            audio_bytes = out_buf.getvalue()
+        cache.save(key, fmt, audio_bytes)
+
+   
+    
     filename = f'{req.voice}.wav'
-    return StreamingResponse(io.BytesIO(audio_byes), media_type="audio/wav", headers={
+    return StreamingResponse(io.BytesIO(audio_bytes), media_type=f"audio/{'wav' if fmt == 'wav' else fmt}", headers={
         "Content-Disposition": f'attachment; filename="{filename}"'
     })
