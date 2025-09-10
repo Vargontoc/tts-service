@@ -1,4 +1,6 @@
 from pathlib import Path
+import shutil
+import sys
 import subprocess, tempfile, os
 from typing import Optional
 
@@ -13,6 +15,9 @@ class PiperEngine:
             raise FileNotFoundError(f"Piper model not found: {self.model_path}")
         if self.config_path and not self.config_path.exists():
             raise FileNotFoundError(f"Piper config not found: {self.config_path}")
+        
+        self._piper_exe = shutil.which("piper")
+        self._use_module = self._piper_exe is None
         
     def synthesize_wav(
         self,
@@ -29,7 +34,13 @@ class PiperEngine:
             tf_path = tf.name
         try:
             
-            cmd = ["piper", "--model", str(self.model_path), "--output_file", "-", "--input_file", tf_path]
+            cmd = []
+            if self._use_module:
+                cmd = [sys.executable, "-m", "piper"]
+            else:
+                cmd = [self._piper_exe]
+                 
+            cmd += ["--model", str(self.model_path), "--output_file", "-", "--input_file", tf_path]
             if self.config_path:
                 cmd += ["--config", str(self.config_path)]
 
