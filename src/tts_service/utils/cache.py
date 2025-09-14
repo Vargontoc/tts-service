@@ -7,7 +7,17 @@ CACHE_DIR = Path("cache")
 CACHE_DIR.mkdir(exist_ok=True)
 
 def make_key(txt: str, voice: str, sample_rate: int, fmt: str) -> str:
+    """Clave legacy (sin provider)."""
     base = f"{voice}|{sample_rate}|{fmt}|{txt.strip()}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+def make_key_v2(txt: str, provider: str, model: str, voice: str, sample_rate: int, fmt: str) -> str:
+    base = f"v2|{provider}|{model}|{voice}|{sample_rate}|{fmt}|{txt.strip()}"
+    return hashlib.sha256(base.encode("utf-8")).hexdigest()
+
+def make_key_v3(txt: str, provider: str, model: str, voice: str, sample_rate: int, fmt: str,
+                speaking_rate: float|None, pitch_shift: float|None, energy: float|None) -> str:
+    base = f"v3|{provider}|{model}|{voice}|{sample_rate}|{fmt}|{speaking_rate}|{pitch_shift}|{energy}|{txt.strip()}"
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
 def get_cache_path(key:str, fmt: str) -> Path:

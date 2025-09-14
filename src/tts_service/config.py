@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(ENV_FILE),
         env_file_encoding="utf-8",
-        case_sensitive=True
+        case_sensitive=True,
+        extra="ignore"  # Ignora variables legacy (EMOTION_PRESETS, etc.)
     )
     
     APP_NAME: str = "tts_service"
@@ -23,6 +24,12 @@ class Settings(BaseSettings):
     API_KEY:str = "placeholder"
     CORS_ORIGINS_RAW: str = ""
     CORS_ORIGINS: List[str] = Field(default_factory=list, exclude=True)
+
+    ENABLE_FALLBACK: bool = True
+    COQUI_USE_GPU: str = Field("auto", description="auto|true|false (aún soportado si no hay unified JSON)")
+    TTS_TIMEOUT_SECONDS: int = Field(0, description="0 = sin timeout")
+    TTS_NORMALIZE_NUMBERS: bool = True  # se puede override en unified JSON defaults
+    ENABLE_PROSODY_CONTROL: bool = True  # fallback si unified JSON ausente
     
     @model_validator(mode="after")
     def _build_cors(self): 

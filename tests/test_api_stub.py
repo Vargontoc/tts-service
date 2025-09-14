@@ -36,6 +36,40 @@ def test_synthesize_wav_ok():
     with wave.open(io.BytesIO(content), "rb") as wf:
         assert wf.getnchannels() == 1
         assert wf.getsampwidth() == 2
-        assert wf.getframerate() == 16000
+        assert wf.getframerate() == 22050
         assert wf.getnframes() > 0
+
+def test_synthesize_with_numbers():
+    payload = {
+        "text": "Tengo 123 manzanas",
+        "voice": "piper-es-ES-mls-medium",
+        "format": "wav"
+    }
+    r = client.post("/synthesize", json=payload, headers={"X-API-Key": settings.API_KEY})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("audio/wav")
+    assert r.content[:4] == b"RIFF"
+
+def test_synthesize_with_prosody_rate():
+    payload = {
+        "text": "Hola mundo de prueba",
+        "voice": "piper-es-ES-mls-medium",
+        "format": "wav",
+        "speaking_rate": 1.5
+    }
+    r = client.post("/synthesize", json=payload, headers={"X-API-Key": settings.API_KEY})
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("audio/wav")
+    assert r.content[:4] == b"RIFF"
+
+def test_synthesize_with_emotion():
+    payload = {
+        "text": "Hola esto es una prueba emocionada",
+        "voice": "piper-es-ES-mls-medium",
+        "format": "wav",
+        "emotion": "happy"
+    }
+    r = client.post("/synthesize", json=payload, headers={"X-API-Key": settings.API_KEY})
+    assert r.status_code == 200
+    assert r.content[:4] == b"RIFF"
     

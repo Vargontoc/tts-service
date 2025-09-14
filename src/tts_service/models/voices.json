@@ -1,13 +1,25 @@
 {
-    "provder": "piper",
-    "voices" : [
+    "provider": "mixed",
+    "voices": [
         {
-            "id" : "piper-es-ES-mls-medium",
-            "lang":  "es-ES",
+            "id": "piper-es-ES-mls-medium",
+            "provider": "piper",
+            "lang": "es-ES",
             "name": "Piper es-ES (mls-medium)",
-            "model" : "models/piper/es-ES/es_ES-mls-medium.onnx",
-            "config" : "models/piper/es-ES/es_ES-mls-medium.onnx.json",
-            "sample_rate" : 22050
+            "model": "models/piper/es-ES/es_ES-mls-medium.onnx",
+            "config": "models/piper/es-ES/es_ES-mls-medium.onnx.json",
+            "sample_rate": 22050
+        },
+        {
+            "id": "coqui-es-css10-vits",
+            "provider": "coqui",
+            "lang": "es-ES",
+            "name": "Coqui es (css10 vits)",
+            "model": "tts_models/es/css10/vits",
+            "sample_rate": 22050,
+            "engine_params": {
+                "speaker": null
+            }
         }
     ]
 }
