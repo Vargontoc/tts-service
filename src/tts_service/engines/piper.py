@@ -81,7 +81,11 @@ class PiperEngine(BaseTTSEngine):
                 out_buf = io.BytesIO()
                 sf.write(out_buf, resampled, sample_rate, format='WAV', subtype='PCM_16')
                 return out_buf.getvalue()
+            except ImportError:
+                # Librerías de resampling no disponibles, devolver audio original
+                return raw_wav
             except Exception:
+                # Error durante resampling, devolver audio original
                 return raw_wav
         finally:
             try:

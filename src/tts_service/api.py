@@ -35,9 +35,8 @@ app.add_middleware(
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-_MODELS_DIR = Path(__file__).resolve().parents[1] / "tts_service" / "models"
-_VOICES_JSON = _MODELS_DIR / "voices.json"
-_UNIFIED_JSON = _MODELS_DIR / "tts_config.json"
+_VOICES_JSON = settings.get_voices_config_path()
+_UNIFIED_JSON = settings.get_unified_config_path()
 
 def _load_config() -> Dict[str, Any]:
     unified: Dict[str, Any] = {}
@@ -127,7 +126,6 @@ def synthesize(req: SynthesizeRequest, api_key: str = Security(require_api_key))
     voice = _get_voice(req.voice)
     if not voice:
         raise HTTPException(status_code=404, detail=f"Voice not found: {req.voice}")
-    original_text = req.text
     if settings.TTS_NORMALIZE_NUMBERS:
         try:
             req.text = normalize_numbers_es(req.text)

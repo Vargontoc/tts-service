@@ -82,16 +82,20 @@ class CoquiEngine(BaseTTSEngine):
                     np.asarray(waveform), orig_sr=orig_sr, target_sr=target_sr
                 )
                 orig_sr = target_sr
+            except ImportError as e:
+                raise RuntimeError(f"Librerías requeridas para resample no disponibles (numpy, librosa): {e}") from e
             except Exception as e:
-                raise RuntimeError(f"Error al re-muestrear audio: {e}") from e
+                raise RuntimeError(f"Error al re-muestrear audio de {orig_sr}Hz a {target_sr}Hz: {e}") from e
 
         try:
             import io, soundfile as sf
             buf = io.BytesIO()
             sf.write(buf, waveform, orig_sr, format="WAV", subtype="PCM_16")
             return buf.getvalue()
+        except ImportError as e:
+            raise RuntimeError(f"Librería soundfile no disponible para generar WAV: {e}") from e
         except Exception as e:
-            raise RuntimeError(f"Error generando WAV: {e}") from e
+            raise RuntimeError(f"Error generando WAV con sample_rate {orig_sr}Hz: {e}") from e
 
 
 # Registro automático

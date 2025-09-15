@@ -30,9 +30,14 @@ class Settings(BaseSettings):
     TTS_TIMEOUT_SECONDS: int = Field(0, description="0 = sin timeout")
     TTS_NORMALIZE_NUMBERS: bool = True  # se puede override en unified JSON defaults
     ENABLE_PROSODY_CONTROL: bool = True  # fallback si unified JSON ausente
+
+    # Configuración de paths
+    MODELS_DIR: str = Field("models", description="Directorio de modelos TTS")
+    VOICES_CONFIG_FILE: str = Field("voices.json", description="Archivo de configuración de voces legacy")
+    UNIFIED_CONFIG_FILE: str = Field("tts_config.json", description="Archivo de configuración unificada")
     
     @model_validator(mode="after")
-    def _build_cors(self): 
+    def _build_cors(self):
         s = (self.CORS_ORIGINS_RAW or "").strip()
         if not s:
             self.CORS_ORIGINS = []
@@ -42,6 +47,20 @@ class Settings(BaseSettings):
         else:  # CSV
             self.CORS_ORIGINS = [x.strip() for x in s.split(",") if x.strip()]
         return self
+
+    def get_models_dir(self) -> Path:
+        """Obtiene el directorio de modelos como Path absoluto."""
+        if Path(self.MODELS_DIR).is_absolute():
+            return Path(self.MODELS_DIR)
+        return PROJECT_ROOT / self.MODELS_DIR
+
+    def get_voices_config_path(self) -> Path:
+        """Obtiene el path del archivo de configuración de voces legacy."""
+        return self.get_models_dir() / self.VOICES_CONFIG_FILE
+
+    def get_unified_config_path(self) -> Path:
+        """Obtiene el path del archivo de configuración unificada."""
+        return self.get_models_dir() / self.UNIFIED_CONFIG_FILE
     
             
 settings = Settings()
