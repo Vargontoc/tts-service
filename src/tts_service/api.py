@@ -103,7 +103,7 @@ def health():
 def voices(api_key: str = Security(require_api_key)):
     return VOICE_INDEX
     
-class SyntheziseRequest(BaseModel):
+class SynthesizeRequest(BaseModel):
     text: str = Field(..., min_length=1)
     voice: Optional[str] = Field(None, description="ID de voz (de /voices)")
     format: str = Field("wav", description=".wav / mp3 / ogg format")
@@ -123,7 +123,7 @@ class SyntheziseRequest(BaseModel):
 
 
 @app.post("/synthesize")
-def synthesize(req: SyntheziseRequest, api_key: str = Security(require_api_key)):
+def synthesize(req: SynthesizeRequest, api_key: str = Security(require_api_key)):
     voice = _get_voice(req.voice)
     if not voice:
         raise HTTPException(status_code=404, detail=f"Voice not found: {req.voice}")
@@ -229,7 +229,7 @@ def synthesize(req: SyntheziseRequest, api_key: str = Security(require_api_key))
 
    
     
-    filename = f'{req.voice}.wav'
+    filename = f'{req.voice}.{fmt}'
     return StreamingResponse(io.BytesIO(audio_bytes), media_type=f"audio/{'wav' if fmt == 'wav' else fmt}", headers={
         "Content-Disposition": f'attachment; filename="{filename}"'
     })
