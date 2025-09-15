@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     HOST: str = "0.0.0.0"
     PORT: int = 8000
 
-    API_KEY:str = "placeholder"
+    API_KEY: str = Field(..., description="API key requerida para autenticación")
     CORS_ORIGINS_RAW: str = ""
     CORS_ORIGINS: List[str] = Field(default_factory=list, exclude=True)
 
