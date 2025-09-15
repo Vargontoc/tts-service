@@ -1,8 +1,10 @@
 import io
 import json
+import time
+import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
-from fastapi import FastAPI, Security, HTTPException, status
+from fastapi import FastAPI, Security, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security.api_key import APIKeyHeader
@@ -16,6 +18,7 @@ from tts_service.utils import cache
 from tts_service.utils.prosody import apply_prosody
 from tts_service.utils.text_norm import normalize_numbers_es
 from tts_service.utils.emotions import resolve_emotion
+from tts_service.utils.logging import get_logger, log_api_request, log_error_with_context
 from .config import settings
 
 
@@ -37,6 +40,9 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 _VOICES_JSON = settings.get_voices_config_path()
 _UNIFIED_JSON = settings.get_unified_config_path()
+
+# Logger para API
+logger = get_logger("tts_service.api")
 
 def _load_config() -> Dict[str, Any]:
     unified: Dict[str, Any] = {}
@@ -96,10 +102,16 @@ def require_api_key(api_key: str = Security(api_key_header)):
 
 @app.get("/health")
 def health():
+    logger.debug("Health check requested")
     return { "status": "ok" }
 
 @app.get("/voices")
 def voices(api_key: str = Security(require_api_key)):
+    request_id = str(uuid.uuid4())[:8]
+    log_api_request(logger, "/voices", request_id)
+
+    logger.info(f"Returning {len(VOICE_INDEX.get('voices', []))} available voices",
+                extra={"request_id": request_id})
     return VOICE_INDEX
     
 class SynthesizeRequest(BaseModel):
@@ -123,8 +135,20 @@ class SynthesizeRequest(BaseModel):
 
 @app.post("/synthesize")
 def synthesize(req: SynthesizeRequest, api_key: str = Security(require_api_key)):
+    start_time = time.time()
+    request_id = str(uuid.uuid4())[:8]
+
+    log_api_request(
+        logger, "/synthesize", request_id,
+        voice_id=req.voice, text_length=len(req.text), format=req.format
+    )
+
     voice = _get_voice(req.voice)
     if not voice:
+        log_error_with_context(
+            logger, ValueError(f"Voice not found: {req.voice}"),
+            {"request_id": request_id, "voice_id": req.voice}
+        )
         raise HTTPException(status_code=404, detail=f"Voice not found: {req.voice}")
     if settings.TTS_NORMALIZE_NUMBERS:
         try:
@@ -164,14 +188,21 @@ def synthesize(req: SynthesizeRequest, api_key: str = Security(require_api_key))
     key_v2 = cache.make_key_v2(req.text, provider, model, req.voice, sr, fmt)
 
     # Compatibilidad: buscar clave v2, luego legacy
+    cache_hit = False
     if key_v3 and cache.exists(key_v3, fmt):
         audio_bytes = cache.load(key_v3, fmt)
+        cache_hit = True
+        logger.info("Cache hit (v3)", extra={"request_id": request_id, "cache_key": "v3"})
     elif cache.exists(key_v2, fmt):
         audio_bytes = cache.load(key_v2, fmt)
+        cache_hit = True
+        logger.info("Cache hit (v2)", extra={"request_id": request_id, "cache_key": "v2"})
     else:
         legacy_key = cache.make_key(req.text, req.voice, sr, fmt)
         if cache.exists(legacy_key, fmt):
             audio_bytes = cache.load(legacy_key, fmt)
+            cache_hit = True
+            logger.info("Cache hit (legacy)", extra={"request_id": request_id, "cache_key": "legacy"})
         else:
             # Selección engine
             def _run(provider_sel: str, voice_obj: Dict[str, Any]):
@@ -194,16 +225,35 @@ def synthesize(req: SynthesizeRequest, api_key: str = Security(require_api_key))
                     speaker=req.speaker
                 )
 
+            logger.info(f"Starting synthesis with {provider} engine",
+                       extra={"request_id": request_id, "provider": provider, "voice_id": req.voice})
+
             try:
                 wav_bytes = _run(provider, voice)
             except Exception as e:
+                log_error_with_context(
+                    logger, e,
+                    {"request_id": request_id, "provider": provider, "voice_id": req.voice, "operation": "synthesis"}
+                )
                 if provider != "piper" and settings.ENABLE_FALLBACK:
+                    logger.warning(f"Attempting fallback to Piper after {provider} failure",
+                                 extra={"request_id": request_id, "original_provider": provider})
                     fb = _find_fallback_voice(voice.get("lang", ""))
                     if not fb:
+                        log_error_with_context(
+                            logger, ValueError("No fallback voice available"),
+                            {"request_id": request_id, "lang": voice.get("lang", "")}
+                        )
                         raise HTTPException(status_code=500, detail=f"Engine {provider} fallo y no hay fallback disponible: {e}")
                     try:
                         wav_bytes = _run("piper", fb)
+                        logger.info("Fallback synthesis successful",
+                                  extra={"request_id": request_id, "fallback_voice": fb.get("id")})
                     except Exception as e2:
+                        log_error_with_context(
+                            logger, e2,
+                            {"request_id": request_id, "provider": "piper", "operation": "fallback_synthesis"}
+                        )
                         raise HTTPException(status_code=500, detail=f"Fallback Piper fallo: {e2}")
                 else:
                     raise HTTPException(status_code=500, detail=f"Engine {provider} error: {e}")
@@ -225,8 +275,19 @@ def synthesize(req: SynthesizeRequest, api_key: str = Security(require_api_key))
                 audio_bytes = out_buf.getvalue()
             cache.save(key_v3 if key_v3 else key_v2, fmt, audio_bytes)
 
-   
-    
+    # Log de finalización exitosa
+    duration = time.time() - start_time
+    logger.info(
+        f"Synthesis request completed successfully",
+        extra={
+            "request_id": request_id,
+            "duration": f"{duration:.2f}s",
+            "output_size": len(audio_bytes),
+            "cache_hit": cache_hit,
+            "format": fmt
+        }
+    )
+
     filename = f'{req.voice}.{fmt}'
     return StreamingResponse(io.BytesIO(audio_bytes), media_type=f"audio/{'wav' if fmt == 'wav' else fmt}", headers={
         "Content-Disposition": f'attachment; filename="{filename}"'

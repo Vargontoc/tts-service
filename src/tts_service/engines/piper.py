@@ -2,21 +2,33 @@ from pathlib import Path
 import shutil
 import sys
 import subprocess, tempfile, os
+import time
 from typing import Optional, Any
 from .base import BaseTTSEngine, EngineRegistry
+from ..utils.logging import get_logger, log_engine_operation, log_error_with_context
 
 
-class PiperEngine(BaseTTSEngine): 
+class PiperEngine(BaseTTSEngine):
     def __init__(self, model: str, config_path: Optional[str] = None, **kwargs: Any):
+        self.logger = get_logger("tts_service.engines.piper")
+
         super().__init__(model, config_path=config_path, **kwargs)
         self.model_path = Path(model).resolve()
         self.config_path = Path(config_path).resolve() if config_path else None
+
         if not self.model_path.exists():
             raise FileNotFoundError(f"Piper model not found: {self.model_path}")
         if self.config_path and not self.config_path.exists():
             raise FileNotFoundError(f"Piper config not found: {self.config_path}")
+
         self._piper_exe = shutil.which("piper")
         self._use_module = self._piper_exe is None
+
+        log_engine_operation(
+            self.logger, "piper", "engine_init",
+            model=str(self.model_path), config=str(self.config_path),
+            use_module=self._use_module
+        )
         
     def synthesize_wav(
         self,
@@ -28,9 +40,17 @@ class PiperEngine(BaseTTSEngine):
         speaker: Optional[int] = None,
         **kwargs: Any
         ) -> bytes :
+        start_time = time.time()
+
+        log_engine_operation(
+            self.logger, "piper", "synthesis_start",
+            text_length=len(text), sample_rate=sample_rate,
+            length_scale=length_scale, noise_scale=noise_scale, speaker=speaker
+        )
+
         if not text or not text.strip():
             raise ValueError("Texto vacío")
-        
+
         with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8",delete=False) as tf:
             tf.write(text.strip() + "\n")
             tf_path = tf.name
@@ -55,37 +75,87 @@ class PiperEngine(BaseTTSEngine):
             if speaker is not None:
                 cmd += ["--speaker", str(speaker)]
                 
-            proc = subprocess.run(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                check=False)
-            
-            if proc.returncode != 0:
-                raise RuntimeError(f"Piper error ({proc.returncode}):{proc.stderr.decode('utf-8', 'ignore')}")
-            raw_wav = proc.stdout
-            if sample_rate is None:
-                return raw_wav
+            try:
+                proc = subprocess.run(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False)
+
+                if proc.returncode != 0:
+                    error_msg = proc.stderr.decode('utf-8', 'ignore')
+                    log_error_with_context(
+                        self.logger, RuntimeError(f"Piper subprocess failed with code {proc.returncode}"),
+                        {"operation": "piper_subprocess", "error_output": error_msg, "command": cmd[0:3]}
+                    )
+                    raise RuntimeError(f"Piper error ({proc.returncode}):{error_msg}")
+
+                raw_wav = proc.stdout
+                if sample_rate is None:
+                    duration = time.time() - start_time
+                    log_engine_operation(
+                        self.logger, "piper", "synthesis_complete",
+                        text_length=len(text), duration=f"{duration:.2f}s", output_size=len(raw_wav)
+                    )
+                    return raw_wav
+            except Exception as e:
+                log_error_with_context(
+                    self.logger, e,
+                    {"operation": "piper_execution", "model": str(self.model_path)}
+                )
+                raise
             # If different, resample
             try:
                 import io, wave, numpy as np, soundfile as sf, librosa
                 with wave.open(io.BytesIO(raw_wav), 'rb') as wf:
                     orig_sr = wf.getframerate()
                 if orig_sr == sample_rate:
+                    duration = time.time() - start_time
+                    log_engine_operation(
+                        self.logger, "piper", "synthesis_complete",
+                        text_length=len(text), duration=f"{duration:.2f}s",
+                        output_size=len(raw_wav), sample_rate=orig_sr
+                    )
                     return raw_wav
                 # Load original data
+                self.logger.debug(f"Resampling audio from {orig_sr}Hz to {sample_rate}Hz")
                 data, orig_sr_2 = sf.read(io.BytesIO(raw_wav))
                 if orig_sr_2 != orig_sr:
                     orig_sr = orig_sr_2
                 resampled = librosa.resample(data, orig_sr=orig_sr, target_sr=sample_rate)
                 out_buf = io.BytesIO()
                 sf.write(out_buf, resampled, sample_rate, format='WAV', subtype='PCM_16')
-                return out_buf.getvalue()
+                resampled_wav = out_buf.getvalue()
+
+                duration = time.time() - start_time
+                log_engine_operation(
+                    self.logger, "piper", "synthesis_complete",
+                    text_length=len(text), duration=f"{duration:.2f}s",
+                    output_size=len(resampled_wav), sample_rate=sample_rate, resampled=True
+                )
+                return resampled_wav
             except ImportError:
                 # Librerías de resampling no disponibles, devolver audio original
+                self.logger.warning("Resampling libraries not available, returning original audio")
+                duration = time.time() - start_time
+                log_engine_operation(
+                    self.logger, "piper", "synthesis_complete",
+                    text_length=len(text), duration=f"{duration:.2f}s",
+                    output_size=len(raw_wav), warning="no_resample_libs"
+                )
                 return raw_wav
-            except Exception:
+            except Exception as e:
                 # Error durante resampling, devolver audio original
+                log_error_with_context(
+                    self.logger, e,
+                    {"operation": "resample", "orig_sr": orig_sr, "target_sr": sample_rate}
+                )
+                duration = time.time() - start_time
+                log_engine_operation(
+                    self.logger, "piper", "synthesis_complete",
+                    text_length=len(text), duration=f"{duration:.2f}s",
+                    output_size=len(raw_wav), warning="resample_failed"
+                )
                 return raw_wav
         finally:
             try:

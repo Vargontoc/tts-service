@@ -37,6 +37,18 @@ EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
   CMD python - <<'PY' || exit 1
+import urllib.request
+import json
+try:
+    with urllib.request.urlopen('http://localhost:8000/health', timeout=3) as response:
+        data = json.loads(response.read().decode())
+        if data.get('status') == 'ok':
+            exit(0)
+        else:
+            exit(1)
+except Exception:
+    exit(1)
+PY
 
 
 CMD ["python", "-m", "tts_service"]

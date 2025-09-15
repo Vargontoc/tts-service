@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from typing import List, Any
+from typing import List, Any, Optional
 from pathlib import Path
 from pydantic import Field, model_validator
 import json
@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     MODELS_DIR: str = Field("models", description="Directorio de modelos TTS")
     VOICES_CONFIG_FILE: str = Field("voices.json", description="Archivo de configuración de voces legacy")
     UNIFIED_CONFIG_FILE: str = Field("tts_config.json", description="Archivo de configuración unificada")
+
+    # Configuración de logging
+    LOG_LEVEL: str = Field("INFO", description="Nivel de logging: DEBUG, INFO, WARNING, ERROR, CRITICAL")
+    LOG_FILE: Optional[str] = Field(None, description="Nombre del archivo de log (None = solo console)")
+    LOG_DIR: str = Field("logs", description="Directorio para archivos de log")
+    LOG_STRUCTURED: bool = Field(True, description="Habilitar logging estructurado JSON")
+    LOG_MAX_BYTES: int = Field(10_485_760, description="Tamaño máximo del archivo de log en bytes (10MB)")
+    LOG_BACKUP_COUNT: int = Field(5, description="Número de archivos de backup a mantener")
     
     @model_validator(mode="after")
     def _build_cors(self):
