@@ -43,6 +43,11 @@ class Settings(BaseSettings):
     LOG_STRUCTURED: bool = Field(True, description="Habilitar logging estructurado JSON")
     LOG_MAX_BYTES: int = Field(10_485_760, description="Tamaño máximo del archivo de log en bytes (10MB)")
     LOG_BACKUP_COUNT: int = Field(5, description="Número de archivos de backup a mantener")
+
+    # Configuración de cache
+    CACHE_DIR: str = Field("cache", description="Directorio para archivos de cache")
+    CACHE_ENABLED: bool = Field(True, description="Habilitar sistema de cache")
+    CACHE_MAX_SIZE_MB: int = Field(1000, description="Tamaño máximo del cache en MB (0 = ilimitado)")
     
     @model_validator(mode="after")
     def _build_cors(self):
@@ -69,6 +74,12 @@ class Settings(BaseSettings):
     def get_unified_config_path(self) -> Path:
         """Obtiene el path del archivo de configuración unificada."""
         return self.get_models_dir() / self.UNIFIED_CONFIG_FILE
+
+    def get_cache_dir(self) -> Path:
+        """Obtiene el directorio de cache como Path absoluto."""
+        if Path(self.CACHE_DIR).is_absolute():
+            return Path(self.CACHE_DIR)
+        return PROJECT_ROOT / self.CACHE_DIR
     
             
 settings = Settings()
