@@ -19,6 +19,7 @@ from tts_service.utils.prosody import apply_prosody
 from tts_service.utils.text_norm import normalize_numbers_es
 from tts_service.utils.emotions import resolve_emotion
 from tts_service.utils.logging import get_logger, log_api_request, log_error_with_context
+from tts_service.utils.dependencies import dependency_manager
 from .config import settings
 
 
@@ -113,6 +114,40 @@ def voices(api_key: str = Security(require_api_key)):
     logger.info(f"Returning {len(VOICE_INDEX.get('voices', []))} available voices",
                 extra={"request_id": request_id})
     return VOICE_INDEX
+
+
+@app.get("/dependencies")
+def get_dependencies_status(api_key: str = Security(require_api_key)):
+    """Endpoint para verificar el estado de las dependencias del sistema."""
+    request_id = str(uuid.uuid4())[:8]
+    log_api_request(logger, "/dependencies", request_id)
+
+    # Validar todas las dependencias
+    results = dependency_manager.validate_all_dependencies()
+
+    # Estadísticas de resumen
+    total_deps = len(results)
+    available_deps = sum(1 for r in results.values() if r["available"])
+    missing_required = dependency_manager.get_missing_required_dependencies()
+    missing_recommended = dependency_manager.get_missing_recommended_dependencies()
+
+    response = {
+        "status": "healthy" if not missing_required else "degraded",
+        "summary": {
+            "total_dependencies": total_deps,
+            "available_dependencies": available_deps,
+            "missing_required": len(missing_required),
+            "missing_recommended": len(missing_recommended),
+        },
+        "dependencies": results,
+        "missing_required_dependencies": missing_required,
+        "missing_recommended_dependencies": missing_recommended,
+    }
+
+    logger.info(f"Dependencies status: {response['status']}",
+                extra={"request_id": request_id, "available": available_deps, "total": total_deps})
+
+    return response
     
 class SynthesizeRequest(BaseModel):
     text: str = Field(..., min_length=1)

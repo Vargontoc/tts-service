@@ -6,6 +6,7 @@ import time
 from typing import Optional, Any
 from .base import BaseTTSEngine, EngineRegistry
 from ..utils.logging import get_logger, log_engine_operation, log_error_with_context
+from ..utils.dependencies import dependency_manager
 
 
 class PiperEngine(BaseTTSEngine):
@@ -105,10 +106,36 @@ class PiperEngine(BaseTTSEngine):
                 )
                 raise
             # If different, resample
+            import io
+            import wave
+
+            # Verificar disponibilidad de dependencias de resampling
+            numpy = dependency_manager.get_optional_dependency("numpy")
+            soundfile = dependency_manager.get_optional_dependency("soundfile")
+            librosa = dependency_manager.get_optional_dependency("librosa")
+
+            if not all([numpy, soundfile, librosa]):
+                missing_deps = []
+                if not numpy: missing_deps.append("numpy")
+                if not soundfile: missing_deps.append("soundfile")
+                if not librosa: missing_deps.append("librosa")
+
+                self.logger.warning(
+                    f"Resampling libraries not available: {', '.join(missing_deps)}. "
+                    f"Returning original audio"
+                )
+                duration = time.time() - start_time
+                log_engine_operation(
+                    self.logger, "piper", "synthesis_complete",
+                    text_length=len(text), duration=f"{duration:.2f}s",
+                    output_size=len(raw_wav), warning="no_resample_libs"
+                )
+                return raw_wav
+
             try:
-                import io, wave, numpy as np, soundfile as sf, librosa
                 with wave.open(io.BytesIO(raw_wav), 'rb') as wf:
                     orig_sr = wf.getframerate()
+
                 if orig_sr == sample_rate:
                     duration = time.time() - start_time
                     log_engine_operation(
@@ -117,14 +144,16 @@ class PiperEngine(BaseTTSEngine):
                         output_size=len(raw_wav), sample_rate=orig_sr
                     )
                     return raw_wav
+
                 # Load original data
                 self.logger.debug(f"Resampling audio from {orig_sr}Hz to {sample_rate}Hz")
-                data, orig_sr_2 = sf.read(io.BytesIO(raw_wav))
+                data, orig_sr_2 = soundfile.read(io.BytesIO(raw_wav))
                 if orig_sr_2 != orig_sr:
                     orig_sr = orig_sr_2
+
                 resampled = librosa.resample(data, orig_sr=orig_sr, target_sr=sample_rate)
                 out_buf = io.BytesIO()
-                sf.write(out_buf, resampled, sample_rate, format='WAV', subtype='PCM_16')
+                soundfile.write(out_buf, resampled, sample_rate, format='WAV', subtype='PCM_16')
                 resampled_wav = out_buf.getvalue()
 
                 duration = time.time() - start_time
@@ -134,16 +163,6 @@ class PiperEngine(BaseTTSEngine):
                     output_size=len(resampled_wav), sample_rate=sample_rate, resampled=True
                 )
                 return resampled_wav
-            except ImportError:
-                # Librerías de resampling no disponibles, devolver audio original
-                self.logger.warning("Resampling libraries not available, returning original audio")
-                duration = time.time() - start_time
-                log_engine_operation(
-                    self.logger, "piper", "synthesis_complete",
-                    text_length=len(text), duration=f"{duration:.2f}s",
-                    output_size=len(raw_wav), warning="no_resample_libs"
-                )
-                return raw_wav
             except Exception as e:
                 # Error durante resampling, devolver audio original
                 log_error_with_context(

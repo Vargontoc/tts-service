@@ -5,16 +5,16 @@ import threading
 import time
 from .base import BaseTTSEngine, EngineRegistry
 from ..utils.logging import get_logger, log_engine_operation, log_error_with_context
+from ..utils.dependencies import safe_import_coqui_tts, safe_import_torch, dependency_manager
 
-try:
-    from TTS.api import TTS as _CoquiTTS
-except ImportError:
-    try:
-        from coqui_tts.api import TTS as _CoquiTTS  # type: ignore
-    except ImportError as e:
-        raise ImportError(
-            "No se encontró el paquete Coqui TTS. Instala con: pip install TTS"
-        ) from e
+# Import Coqui TTS de forma segura
+_CoquiTTS, _coqui_error = safe_import_coqui_tts()
+if _CoquiTTS is None:
+    raise ImportError(
+        f"Coqui TTS no está disponible. "
+        f"Error: {_coqui_error}. "
+        f"Instalar con: pip install TTS"
+    )
 
 
 @lru_cache(maxsize=4)
@@ -31,13 +31,17 @@ class CoquiEngine(BaseTTSEngine):
         self.logger = get_logger(f"tts_service.engines.coqui")
 
         if use_gpu is None:
-            try:
-                import torch
-                use_gpu = bool(torch.cuda.is_available())
-                self.logger.debug(f"GPU auto-detection: {use_gpu}")
-            except Exception:
+            torch = safe_import_torch()
+            if torch:
+                try:
+                    use_gpu = bool(torch.cuda.is_available())
+                    self.logger.debug(f"GPU auto-detection: {use_gpu}")
+                except Exception as e:
+                    use_gpu = False
+                    self.logger.debug(f"GPU detection failed: {e}, using CPU")
+            else:
                 use_gpu = False
-                self.logger.debug("GPU auto-detection failed, using CPU")
+                self.logger.debug("PyTorch not available, using CPU")
 
         super().__init__(model_name, use_gpu=use_gpu, **kwargs)
         self.model_name = model_name
@@ -103,21 +107,37 @@ class CoquiEngine(BaseTTSEngine):
 
         target_sr = sample_rate or orig_sr
         if target_sr != orig_sr:
+            numpy = dependency_manager.get_optional_dependency("numpy")
+            librosa = dependency_manager.get_optional_dependency("librosa")
+
+            if not numpy or not librosa:
+                missing_deps = []
+                if not numpy: missing_deps.append("numpy")
+                if not librosa: missing_deps.append("librosa")
+                raise RuntimeError(
+                    f"Librerías requeridas para resample no disponibles: {', '.join(missing_deps)}. "
+                    f"Instalar con: pip install {' '.join(missing_deps)}"
+                )
+
             try:
-                import numpy as np, librosa
                 waveform = librosa.resample(
-                    np.asarray(waveform), orig_sr=orig_sr, target_sr=target_sr
+                    numpy.asarray(waveform), orig_sr=orig_sr, target_sr=target_sr
                 )
                 orig_sr = target_sr
-            except ImportError as e:
-                raise RuntimeError(f"Librerías requeridas para resample no disponibles (numpy, librosa): {e}") from e
             except Exception as e:
                 raise RuntimeError(f"Error al re-muestrear audio de {orig_sr}Hz a {target_sr}Hz: {e}") from e
 
+        soundfile = dependency_manager.get_optional_dependency("soundfile")
+        if not soundfile:
+            raise RuntimeError(
+                "SoundFile no está disponible para generar WAV. "
+                "Instalar con: pip install soundfile"
+            )
+
         try:
-            import io, soundfile as sf
+            import io
             buf = io.BytesIO()
-            sf.write(buf, waveform, orig_sr, format="WAV", subtype="PCM_16")
+            soundfile.write(buf, waveform, orig_sr, format="WAV", subtype="PCM_16")
             wav_bytes = buf.getvalue()
 
             duration = time.time() - start_time
@@ -128,12 +148,6 @@ class CoquiEngine(BaseTTSEngine):
             )
 
             return wav_bytes
-        except ImportError as e:
-            log_error_with_context(
-                self.logger, e,
-                {"operation": "wav_generation", "model": self.model_name}
-            )
-            raise RuntimeError(f"Librería soundfile no disponible para generar WAV: {e}") from e
         except Exception as e:
             log_error_with_context(
                 self.logger, e,
