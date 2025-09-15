@@ -61,7 +61,6 @@ class PiperEngine(BaseTTSEngine):
                 stderr=subprocess.PIPE,
                 check=False)
             
-            print("The command is {}".format(proc.args))
             if proc.returncode != 0:
                 raise RuntimeError(f"Piper error ({proc.returncode}):{proc.stderr.decode('utf-8', 'ignore')}")
             raw_wav = proc.stdout
